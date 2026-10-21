@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>吸入劑衛教語音評量系統</title>
+<style>
+  :root { --green:#16794c; --red:#b42318; --amber:#9a6700; --blue:#0b5fff; }
+  * { box-sizing:border-box; }
+  body { font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif; margin:0; background:#f4f7fb; color:#17202a; }
+  header { background:#0b3d64; color:#fff; padding:16px; }
+  h1 { font-size:1.15rem; margin:0; }
+  main { padding:14px; max-width:820px; margin:auto; }
+  .card { background:#fff; border-radius:14px; padding:14px; margin-bottom:12px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+  label { font-weight:700; display:block; margin-bottom:6px; }
+  select, textarea, input { width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:10px; font-size:16px; }
+  textarea { min-height:150px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  button { flex:1 1 140px; padding:12px; font-size:16px; font-weight:700; border:0; border-radius:12px; cursor:pointer; }
+  .start { background:var(--blue); color:#fff; }
+  .stop { background:#57606a; color:#fff; }
+  .score { background:var(--green); color:#fff; }
+  .reset { background:#eaeef2; color:#24292f; }
+  .status { font-weight:700; margin-top:8px; }
+  .listening { color:var(--green); }
+  .step { border-left:5px solid #d0d7de; padding:8px 10px; margin:8px 0; background:#f6f8fa; border-radius:8px; }
+  .hit { border-left-color:var(--green); background:#eaf6f0; }
+  .miss { border-left-color:var(--red); background:#fff1f0; }
+  .tag { display:inline-block; font-size:12px; padding:2px 7px; border-radius:999px; margin:2px; background:#eaeef2; }
+  .tag.ok { background:#d1f4dd; color:#116329; }
+  .tag.no { background:#ffd8d3; color:#82071d; }
+  .summary { font-size:1.1rem; font-weight:800; }
+  .note { font-size:13px; color:#57606a; }
+  .interim { color:#6e7781; font-style:italic; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>吸入劑衛教步驟語音評量</h1>
+  <div class="note" style="color:#cfe3f7">適用於藥學生練習：MDI＋儲霧罐、乾粉吸入劑（DPI）</div>
+</header>
+
+<main>
+  <section class="card">
+    <label for="device">選擇吸入劑類型</label>
+    <select id="device">
+      <option value="mdi">MDI ＋ 儲霧罐（Spacer）</option>
+      <option value="dpi">乾粉吸入劑（DPI）</option>
+    </select>
+
+    <div class="row" style="margin-top:12px">
+      <button id="startBtn" class="start">🎤 開始錄音與辨識</button>
+      <button id="stopBtn" class="stop" disabled>⏹ 停止並評分</button>
+      <button id="resetBtn" class="reset">🔄 重新練習</button>
+    </div>
+
+    <div id="status" class="status">尚未開始。請允許麥克風權限後開始練習。</div>
+  </section>
+
+  <section class="card">
+    <label>即時語音辨識文字</label>
+    <textarea id="transcript" placeholder="學員口述內容會顯示在這裡；也可手動修正後再按評分。"></textarea>
+    <div class="note">提示：語音辨識可能因背景噪音、裝置或瀏覽器而異；教師可手動修正文字後重新評分。</div>
+  </section>
+
+  <section class="card">
+    <label>步驟檢核結果</label>
+    <div id="results"></div>
+    <div id="summary" class="summary"></div>
+    <div id="feedback"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const transcriptEl = $("transcript");
+const statusEl = $("status");
+const resultsEl = $("results");
+const summaryEl = $("summary");
+const feedbackEl = $("feedback");
+
+const checklists = {
+  mdi: [
+    { step:"確認藥品、劑量與使用時機，並說明裝置用途",
+      keys:["藥品","藥名","劑量","使用時機","用途","作用","支氣管擴張","類固醇"] },
+    { step:"檢查剩餘劑量／有效期限，必要時 priming",
+      keys:["劑量計數","剩餘劑量","有效期限","priming","prime","初次使用","試噴"] },
+    { step:"移除吸入劑與儲霧罐瓶蓋，將 MDI 裝入儲霧罐",
+      keys:["打開","移除","瓶蓋","蓋子","裝入","插入","儲霧罐","spacer","輔助艙"] },
+    { step:"充分搖晃 MDI",
+      keys:["搖晃","搖勻","搖","shake"] },
+    { step:"先吐氣，且不可對著裝置吐氣",
+      keys:["吐氣","呼氣","先吐氣","慢慢吐氣","不要對著","遠離"] },
+    { step:"嘴唇緊密含住儲霧罐吸嘴，維持良好密合",
+      keys:["嘴唇","含住","密合","密封","緊閉","吸嘴","嘴巴"] },
+    { step:"按壓 MDI 一次釋放藥物至儲霧罐",
+      keys:["按壓","壓","按一下","噴","釋放","一次"] },
+    { step:"緩慢且深吸氣，避免太快造成哨音",
+      keys:["慢慢","緩慢","深吸","吸氣","吸","不要太快","哨音"] },
+    { step:"移開後閉氣約 5–10 秒",
+      keys:["閉氣","憋氣","暫停呼吸","10秒","十秒","5秒","五秒"] },
+    { step:"緩慢吐氣；若需第二劑應間隔約 30 秒",
+      keys:["吐氣","呼氣","第二劑","第二下","間隔","30秒","三十秒","等待"] },
+    { step:"含類固醇者應漱口、漱喉並吐掉，勿吞下",
+      keys:["漱口","漱喉","漱嘴","吐掉","不要吞","類固醇","副作用","鵝口瘡"] },
+    { step:"蓋回瓶蓋並說明清潔保存",
+      keys:["蓋回","蓋上","瓶蓋","清潔","清洗","保存","晾乾","乾燥"] }
+  ],
+  dpi: [
+    { step:"確認藥品、劑量與使用時機，並說明裝置用途",
+      keys:["藥品","藥名","劑量","使用時機","用途","作用","支氣管擴張","類固醇"] },
+    { step:"檢查剩餘劑量／有效期限，並正確備藥或裝載膠囊",
+      keys:["劑量計數","剩餘劑量","有效期限","裝載","膠囊","備藥","旋轉","打開"] },
+    { step:"打開裝置並依廠牌指示備妥劑量",
+      keys:["打開","打開蓋子","旋轉","推","按壓","裝載","備藥","click","喀"] },
+    { step:"先吐氣，且不可對著 DPI 吐氣",
+      keys:["吐氣","呼氣","先吐氣","不要對著","遠離","不可吹"] },
+    { step:"嘴唇緊密含住吸嘴，不可遮住通氣孔",
+      keys:["嘴唇","含住","密合","密封","吸嘴","通氣孔","氣孔","緊閉"] },
+    { step:"快速且用力深吸氣，不可逐漸加速",
+      keys:["快速","用力","深吸","快吸","用力吸","迅速","一開始"] },
+    { step:"移開裝置後閉氣約 5–10 秒",
+      keys:["閉氣","憋氣","暫停呼吸","10秒","十秒","5秒","五秒"] },
+    { step:"移開後緩慢吐氣，不可對裝置吐氣",
+      keys:["吐氣","呼氣","慢慢","遠離","不要對著","不可吹"] },
+    { step:"若為膠囊型，確認膠囊已空或必要時再吸一次",
+      keys:["膠囊","確認","空","再吸","重複","第二次","粉末"] },
+    { step:"含類固醇者應漱口、漱喉並吐掉，勿吞下",
+      keys:["漱口","漱喉","漱嘴","吐掉","不要吞","類固醇","副作用","鵝口瘡"] },
+    { step:"關閉裝置並說明清潔保存",
+      keys:["關閉","蓋回","蓋上","清潔","保存","乾燥","防潮"] }
+  ]
+};
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let listening = false;
+let finalText = "";
+
+function normalize(text){
+  return (text || "").toLowerCase()
+    .replace(/\s+/g,"")
+    .replace(/[，。、！？：；,.!?;:"'（）()\[\]{}]/g,"");
+}
+
+function evaluate(){
+  const type = $("device").value;
+  const text = normalize(transcriptEl.value);
+  const items = checklists[type];
+  let hits = 0;
+
+  resultsEl.innerHTML = "";
+  items.forEach((item, i) => {
+    const matched = item.keys.filter(k => text.includes(normalize(k)));
+    const ok = matched.length > 0;
+    if(ok) hits++;
+    const div = document.createElement("div");
+    div.className = "step " + (ok ? "hit" : "miss");
+    div.innerHTML =
+      `<strong>${i+1}. ${item.step}</strong><br>` +
+      (ok
+        ? `<span class="tag ok">✔ 偵測到：${matched.join("、")}</span>`
+        : `<span class="tag no">✘ 未偵測到關鍵字</span>`);
+    resultsEl.appendChild(div);
+  });
+
+  const pct = Math.round(hits / items.length * 100);
+  summaryEl.textContent = `完成率：${hits}/${items.length}（${pct}%）`;
+  summaryEl.style.color = pct >= 80 ? "var(--green)" : pct >= 50 ? "var(--amber)" : "var(--red)";
+
+  const missed = items.filter((x,i)=>!normalize(transcriptEl.value).includes("") && !items[i].keys.some(k=>text.includes(normalize(k))));
+  feedbackEl.innerHTML = missed.length
+    ? `<div class="note" style="margin-top:8px"><strong>建議補強：</strong>請重新說明 ${missed.map(x=>x.step).join("；")}。</div>`
+    : `<div class="note" style="margin-top:8px"><strong>評語：</strong>關鍵步驟均已口述。仍應由教師確認示範動作、吸气流速、按壓與吸氣協調及閉氣時間。</div>`;
+}
+
+function startRecognition(){
+  if(!SpeechRecognition){
+    statusEl.textContent = "此瀏覽器不支援語音辨識。請改用 Chrome／Edge／Safari，或直接在文字框輸入後按「停止並評分」。";
+    return;
+  }
+  recognition = new SpeechRecognition();
+  recognition.lang = "zh-TW";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  finalText = transcriptEl.value ? transcriptEl.value + " " : "";
+  listening = true;
+  $("startBtn").disabled = true;
+  $("stopBtn").disabled = false;
+  statusEl.textContent = "🎤 正在聆聽，請學員開始口述衛教步驟……";
+  statusEl.className = "status listening";
+
+  recognition.onresult = e => {
+    let interim = "";
+    for(let i=e.resultIndex; i<e.results.length; i++){
+      const r = e.results[i];
+      if(r.isFinal) finalText += r[0].transcript + " ";
+      else interim += r[0].transcript;
+    }
+    transcriptEl.value = finalText + interim;
+    evaluate();
+  };
+
+  recognition.onerror = e => {
+    if(["no-speech","aborted"].includes(e.error)) return;
+    statusEl.textContent = "語音辨識錯誤：" + e.error +
+      (e.error === "not-allowed" ? "（請允許麥克風權限）" : "");
+    statusEl.className = "status";
+  };
+
+  recognition.onend = () => {
+    if(listening){
+      try { recognition.start(); } catch(_) {}
+    } else {
+      statusEl.textContent = "已停止錄音。";
+      statusEl.className = "status";
+    }
+  };
+
+  try { recognition.start(); } catch(err){
+    statusEl.textContent = "無法啟動語音辨識：" + err.message;
+  }
+}
+
+function stopRecognition(){
+  listening = false;
+  if(recognition){
+    try { recognition.stop(); } catch(_) {}
+  }
+  $("startBtn").disabled = false;
+  $("stopBtn").disabled = true;
+  evaluate();
+}
+
+$("startBtn").addEventListener("click", startRecognition);
+$("stopBtn").addEventListener("click", stopRecognition);
+$("resetBtn").addEventListener("click", () => {
+  stopRecognition();
+  transcriptEl.value = "";
+  finalText = "";
+  resultsEl.innerHTML = "";
+  summaryEl.textContent = "";
+  feedbackEl.innerHTML = "";
+  statusEl.textContent = "已重置，可重新練習。";
+  statusEl.className = "status";
+});
+transcriptEl.addEventListener("input", evaluate);
+$("device").addEventListener("change", evaluate);
+</script>
+</body>
+</html>
